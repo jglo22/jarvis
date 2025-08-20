@@ -46,6 +46,6 @@ async def obsidian(request: Request):
 
     return {"ok": True, "appended": text}
 
-@app.route('/')
+@app.get("/")
 def home():
-    return "Jarvis is online."
+    return {"message": "Jarvis is online."}
