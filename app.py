@@ -1,11 +1,27 @@
+import os
+from fastapi import Header, HTTPException
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from core.types import ObsidianCommand
+from adapters.obsidian_fs import ObsidianFSAdapter
 
 APP_VERSION = "0.1.0"
 
 app = FastAPI(title="Jarvis API", version=APP_VERSION)
+
+adapter = ObsidianFSAdapter()
+
+AUTH_TOKEN = os.getenv("AUTH_TOKEN")
+
+def check_auth(authorization: str | None):
+    if not AUTH_TOKEN:
+        return  # auth disabled if no token set
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    if token != AUTH_TOKEN:
+        raise HTTPException(status_code=403, detail="invalid token")
 
 @app.get("/health")
 def health():
@@ -26,24 +42,60 @@ async def alert(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-# NEW unified endpoint: accepts the obsidian.command envelope and only validates for now.
-# The actual filesystem/GitHub/URI adapter will be wired in next steps.
 @app.post("/obsidian/command")
-async def obsidian_command(cmd: ObsidianCommand, request: Request):
+async def obsidian_command(cmd: ObsidianCommand, request: Request, authorization: str | None = Header(default=None)):
+    check_auth(authorization)
     try:
-        # If we reached here, FastAPI + Pydantic already validated the payload shape.
-        # We stub the action handler for now and simply echo back the essentials.
+        # Route to adapter based on action
+        if cmd.action == "note.create":
+            record_id = adapter.note_create(
+                path=cmd.payload.path,
+                title=cmd.payload.title or "",
+                body_md=cmd.payload.body_md or "",
+                vault=cmd.payload.vault,
+            )
+        elif cmd.action == "note.append":
+            record_id = adapter.note_append(
+                path=cmd.payload.path,
+                body_md=cmd.payload.body_md or "",
+                position=(cmd.payload.position or "bottom"),
+                heading=cmd.payload.heading,
+                vault=cmd.payload.vault,
+            )
+        elif cmd.action == "note.update":
+            record_id = adapter.note_update(
+                path=cmd.payload.path,
+                body_md=cmd.payload.body_md or "",
+                vault=cmd.payload.vault,
+            )
+        elif cmd.action == "task.create":
+            record_id = adapter.task_create(
+                path=cmd.payload.path,
+                task_text=cmd.payload.task_text or "",
+                due=cmd.payload.due,
+                tags=cmd.payload.tags,
+                vault=cmd.payload.vault,
+            )
+        elif cmd.action == "task.toggle":
+            record_id = adapter.task_toggle(
+                path=cmd.payload.path,
+                task_state=(cmd.payload.task_state or "done"),
+                task_text=cmd.payload.task_text,
+                vault=cmd.payload.vault,
+            )
+        else:
+            return JSONResponse(status_code=400, content={"error": f"unsupported action {cmd.action}"})
+
         return {
             "status": "ok",
             "action": cmd.action,
-            "path": cmd.payload.path,
+            "record_id": record_id,
             "trace_id": (cmd.payload.meta.trace_id if cmd.payload.meta else None),
         }
     except ValidationError as ve:
-        # This block is mostly defensive; FastAPI would convert Pydantic errors to 422 by default.
         return JSONResponse(status_code=400, content={"error": "validation_error", "details": ve.errors()})
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 @app.get("/")
 def home():
