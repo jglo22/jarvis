@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.local/schemas/obsidian.command.schema.json",
+  "title": "Obsidian Command",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "type": { "const": "obsidian.command" },
+    "action": {
+      "type": "string",
+      "enum": ["note.create","note.append","note.update","task.create","task.toggle"]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vault": { "type": "string" },
+        "path": {
+          "type": "string",
+          "description": "Markdown file path inside vault",
+          "pattern": "\\.md$"
+        },
+        "heading": { "type": "string" },
+        "position": { "type": "string", "enum": ["top","bottom","after_heading"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body_md": { "type": "string", "minLength": 1 },
+        "task_text": { "type": "string", "minLength": 1 },
+        "task_state": { "type": "string", "enum": ["open","done"] },
+        "due": { "type": "string", "format": "date-time" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 200 },
+            "trace_id": { "type": "string", "minLength": 8, "maxLength": 200 }
+          }
+        }
+      }
+    }
+  },
+  "required": ["type","action","payload"],
+  "allOf": [
+    { "if": { "properties": { "action": { "const": "note.create" } } },
+      "then": { "required": ["type","action","payload"],
+        "properties": { "payload": { "required": ["path","title","body_md"] } } } },
+    { "if": { "properties": { "action": { "const": "note.append" } } },
+      "then": { "properties": { "payload": { "required": ["path","body_md"], 
+        "allOf": [
+          { "if": { "properties": { "position": { "const": "after_heading" } } },
+            "then": { "required": ["heading"] } }
+        ] } } } },
+    { "if": { "properties": { "action": { "const": "note.update" } } },
+      "then": { "properties": { "payload": { "required": ["path","body_md"] } } } },
+    { "if": { "properties": { "action": { "const": "task.create" } } },
+      "then": { "properties": { "payload": { "required": ["path","task_text"] } } } },
+    { "if": { "properties": { "action": { "const": "task.toggle" } } },
+      "then": { "properties": { "payload": { "required": ["path","task_state"] } } } }
+  ],
+  "examples": [
+    {
+      "type": "obsidian.command",
+      "action": "note.append",
+      "payload": {
+        "path": "Daily/2025-08-21.md",
+        "position": "after_heading",
+        "heading": "Standup",
+        "body_md": "- [ ] Review PR #214",
+        "meta": { "idempotency_key": "day-2025-08-21-standup-pr214" }
+      }
+    },
+    {
+      "type": "obsidian.command",
+      "action": "task.create",
+      "payload": {
+        "path": "Projects/Alpha.md",
+        "task_text": "Prepare kickoff agenda",
+        "due": "2025-08-22T09:00:00+01:00",
+        "tags": ["alpha","planning"],
+        "meta": { "trace_id": "abc-123" }
+      }
+    }
+  ]
+}
