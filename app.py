@@ -4,7 +4,18 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from core.types import ObsidianCommand
-from adapters.obsidian_fs import ObsidianFSAdapter
+
+# Robust import that works both locally and on Render
+try:
+    from adapters.obsidian_fs import ObsidianFSAdapter
+except ModuleNotFoundError:
+    # Fallback: ensure project root is on sys.path, then retry
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.resolve()
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from adapters.obsidian_fs import ObsidianFSAdapter  # retry
 
 APP_VERSION = "0.1.0"
 
