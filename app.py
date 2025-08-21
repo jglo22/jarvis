@@ -27,45 +27,53 @@ async def obsidian(request: Request):
 
     try:
         data = await request.json()
-        text = data.get("text", "")
-        if not text:
-            return JSONResponse(status_code=400, content={"error": "Missing 'text' in request"})
+        heading = data.get("heading", "")
+        item = data.get("text", "")
 
-        # Load env vars safely
+        if not heading or not item:
+            return JSONResponse(status_code=400, content={"error": "Missing 'heading' or 'text'"})
+
+        # Load env vars
         token = os.environ.get("GITHUB_TOKEN")
         repo_name = os.environ.get("GITHUB_REPO")
         branch = os.environ.get("GITHUB_BRANCH")
         obsidian_file = os.environ.get("OBSIDIAN_FILE")
 
-        # Ensure all required env vars are present
         if not all([token, repo_name, branch, obsidian_file]):
             return JSONResponse(status_code=500, content={"error": "Missing required environment variables"})
 
         # Connect to GitHub
         g = Github(token)
         repo = g.get_repo(repo_name)
-
-        # Get the file contents
         file = repo.get_contents(obsidian_file, ref=branch)
-        current_content = file.decoded_content.decode()
+        content = file.decoded_content.decode().splitlines()
 
-        # Append the text
-        new_content = current_content + "\n" + text
+        # Insert after the heading
+        new_content = []
+        inserted = False
+        for line in content:
+            new_content.append(line)
+            if not inserted and line.strip().lower() == f"# {heading.lower()}":
+                new_content.append(f"- {item}")
+                inserted = True
 
-        # Commit back
+        if not inserted:
+            return JSONResponse(status_code=404, content={"error": f"Heading '{heading}' not found"})
+
+        final = "\n".join(new_content)
         repo.update_file(
             file.path,
-            f"Append via Jarvis: {text}",
-            new_content,
+            f"Add '{item}' under {heading}",
+            final,
             file.sha,
             branch=branch
         )
 
-        return {"ok": True, "appended": text}
+        return {"ok": True, "added": item, "under": heading}
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
-
+    
 @app.get("/")
 def home():
     return {"message": "Jarvis is online."}
