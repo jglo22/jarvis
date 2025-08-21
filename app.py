@@ -15,7 +15,110 @@ except ModuleNotFoundError:
     project_root = Path(__file__).parent.resolve()
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-    from adapters.obsidian_fs import ObsidianFSAdapter  # retry
+    try:
+        from adapters.obsidian_fs import ObsidianFSAdapter  # retry
+    except ModuleNotFoundError:
+        # Final fallback: lightweight inline filesystem adapter so deployment still works
+        from pathlib import Path
+        from datetime import datetime
+        from typing import Optional, List
+
+        class ObsidianFSAdapter:
+            def __init__(self):
+                base = os.getenv("OBSIDIAN_VAULT_PATH") or str((Path.cwd() / "_vault").resolve())
+                self.base = Path(base)
+                self.base.mkdir(parents=True, exist_ok=True)
+
+            def _note_path(self, path: str) -> Path:
+                # Normalize and ensure directories exist
+                p = (self.base / path).resolve()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                return p
+
+            def note_create(self, path: str, title: str, body_md: str, vault: Optional[str] = None) -> str:
+                p = self._note_path(path)
+                content = ""
+                if title and not body_md.lstrip().startswith("#"):
+                    content += f"# {title}\n\n"
+                content += body_md or ""
+                p.write_text(content, encoding="utf-8")
+                return path
+
+            def note_update(self, path: str, body_md: str, vault: Optional[str] = None) -> str:
+                p = self._note_path(path)
+                p.write_text(body_md or "", encoding="utf-8")
+                return path
+
+            def note_append(self, path: str, body_md: str, position: str = "bottom", heading: Optional[str] = None, vault: Optional[str] = None) -> str:
+                p = self._note_path(path)
+                if not p.exists():
+                    p.write_text("", encoding="utf-8")
+                lines = p.read_text(encoding="utf-8").splitlines()
+                insert_block = (body_md or "")
+                if position == "after_heading" and heading:
+                    # Find heading line that matches exactly (ignoring leading # and spaces)
+                    target_idx = None
+                    target_key = heading.strip().lower()
+                    for i, line in enumerate(lines):
+                        stripped = line.lstrip("#").strip().lower()
+                        if stripped == target_key:
+                            target_idx = i
+                            break
+                    if target_idx is not None:
+                        # Insert after the heading and any immediate blank line
+                        insert_at = target_idx + 1
+                        if insert_at < len(lines) and lines[insert_at].strip() == "":
+                            insert_at += 1
+                        new_lines = lines[:insert_at] + [insert_block] + lines[insert_at:]
+                        p.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                        return path
+                # Default: append to bottom with a separating blank line
+                if lines and lines[-1].strip() != "":
+                    lines.append("")
+                lines.append(insert_block)
+                p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                return path
+
+            def task_create(self, path: str, task_text: str, due: Optional[str] = None, tags: Optional[List[str]] = None, vault: Optional[str] = None) -> str:
+                p = self._note_path(path)
+                if not p.exists():
+                    p.write_text("", encoding="utf-8")
+                line = f"- [ ] {task_text}"
+                meta_bits = []
+                if due:
+                    meta_bits.append(f"🗓 {due}")
+                if tags:
+                    meta_bits.append(" ".join(f"#{t}" for t in tags if t))
+                if meta_bits:
+                    line += "  " + " ".join(meta_bits)
+                content = p.read_text(encoding="utf-8")
+                if content and not content.endswith("\n"):
+                    content += "\n"
+                content += line + "\n"
+                p.write_text(content, encoding="utf-8")
+                return path
+
+            def task_toggle(self, path: str, task_state: str = "done", task_text: Optional[str] = None, vault: Optional[str] = None) -> str:
+                p = self._note_path(path)
+                if not p.exists():
+                    raise FileNotFoundError(f"note not found: {path}")
+                lines = p.read_text(encoding="utf-8").splitlines()
+                want = "x" if task_state == "done" else " "
+                changed = False
+                for i, line in enumerate(lines):
+                    if not line.strip().startswith("- ["):
+                        continue
+                    if task_text and task_text not in line:
+                        continue
+                    # Replace the checkbox marker
+                    lines[i] = "- [" + want + "]" + line[line.find("]") + 1 :]
+                    changed = True
+                    if task_text:
+                        break
+                if not changed:
+                    raise ValueError("matching task not found to toggle")
+                p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                return path
 
 APP_VERSION = "0.1.0"
 
